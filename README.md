@@ -26,3 +26,21 @@ shell utils
 
 ### fdisk无交互命令行分区，虽然可以用parted命令，但是好像与fdisk的分区有区别
 [misc.sh#L26](misc.sh#L26)
+
+### 合并从bilibili缓存的视频，m4s文件转mp4，放在缓存的合集目录下，该目录下序号的文件夹
+[bili.sh](bili.sh)
+
+
+### 合并一个从百度云盘下载的视频，流畅模式(经百度转码的m3u8文件)为mp4，放在一个下载的流畅视频文件目录内，与m3u8文件同级
+[bdy.sh](bdy.sh)
+```批量合并多个视频，在多少视频文件夹上级目录
+for one_dir in $(ls -AF | egrep "^\..*/$");do
+  cd $one_dir;
+  if [ ! -f "bdy.sh" ];then
+    rm -rf *.txt *.mp4 \.*m3u8.mp4 *.ts ts_list.txt bdy.sh;
+    \cp -rf ../bdy.sh .;
+    bash bdy.sh;
+  fi
+  cd ..;
+done
+```
