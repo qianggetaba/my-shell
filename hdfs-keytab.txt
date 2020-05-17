@@ -1,0 +1,332 @@
+
+
+安装kdc
+yum -y install krb5-libs krb5-server krb5-workstation
+
+echo '192.168.127.131 myli' >> /etc/hosts # hostname
+echo '192.168.127.131 kerberos.example.com' >> /etc/hosts
+
+kdb5_util create -r EXAMPLE.COM -s # 另一个终端 cat /dev/sda > /dev/urandom
+kadmin.local -q "addprinc admin/admin"
+/etc/init.d/krb5kdc start
+/etc/init.d/kadmin start
+
+kadmin.local -q 'addprinc -randkey hdfs/myli@EXAMPLE.COM'
+kadmin.local -q 'addprinc -randkey HTTP/myli@EXAMPLE.COM'
+kadmin.local -q 'xst -k hdfs.keytab hdfs/myli@EXAMPLE.COM' # keytab
+kadmin.local -q 'xst -k HTTP.keytab HTTP/myli@EXAMPLE.COM'
+
+klist -kt hdfs.keytab
+kinit -kt hdfs.keytab hdfs/myli@EXAMPLE.COM
+klist
+kdestroy
+
+
+安装hadoop
+useradd hdfs
+cp hdfs.keytab /home/hdfs/
+cp HTTP.keytab /home/hdfs/
+chown hdfs:hdfs /home/hdfs/*.keytab
+
+yum -y install java-1.8.0-openjdk-devel java
+yum -y groupinstall 'Development Tools'  # 编译jsvc
+
+su - hdfs
+wget https://archive.apache.org/dist/hadoop/common/hadoop-2.7.1/hadoop-2.7.1.tar.gz
+wget https://archive.apache.org/dist/commons/daemon/binaries/commons-daemon-1.0.15-bin.tar.gz
+wget https://archive.apache.org/dist/commons/daemon/source/commons-daemon-1.0.15-src.tar.gz
+
+tar xf hadoop-2.7.1.tar.gz
+tar xf commons-daemon-1.0.15-bin.tar.gz
+tar xf commons-daemon-1.0.15-src.tar.gz
+cd commons-daemon-1.0.15-src/src/native/unix/
+./configure --with-java=/usr/lib/jvm/java-openjdk
+make
+cp jsvc ~/hadoop-2.7.1/libexec/
+cd
+rm ~/hadoop-2.7.1/share/hadoop/hdfs/lib/commons-daemon-1.0.13.jar
+cp commons-daemon-1.0.15/commons-daemon-1.0.15.jar ~/hadoop-2.7.1/share/hadoop/hdfs/lib/
+
+cd hadoop-2.7.1
+
+sed -i 's/JAVA_HOME=.*/JAVA_HOME=\/usr\/lib\/jvm\/java-openjdk/g' etc/hadoop/hadoop-env.sh
+sed -i 's/#.*JSVC_HOME=.*/export JSVC_HOME=\/home\/hdfs\/hadoop-2.7.1\/libexec/g' etc/hadoop/hadoop-env.sh
+sed -i 's/HADOOP_SECURE_DN_USER=.*/HADOOP_SECURE_DN_USER=hdfs/g' etc/hadoop/hadoop-env.sh
+
+sed -i '19,$d' etc/hadoop/core-site.xml
+
+echo '<configuration>
+    <property>
+        <name>fs.defaultFS</name>
+        <value>hdfs://192.168.127.131:9000</value>
+    </property>
+    <property>
+        <name>hadoop.security.authentication</name>
+        <value>kerberos</value>
+    </property>
+    <property>
+        <name>hadoop.security.authorization</name>
+        <value>true</value>
+    </property>
+</configuration>' >> etc/hadoop/core-site.xml
+
+sed -i '19,$d' etc/hadoop/hdfs-site.xml
+echo '<configuration>
+    <property>
+        <name>dfs.replication</name>
+        <value>1</value>
+    </property>
+    <property>
+        <name>dfs.block.access.token.enable</name>
+        <value>true</value>
+    </property>
+    <property>  
+      <name>dfs.datanode.data.dir.perm</name>  
+      <value>700</value>  
+    </property>
+    <property>
+      <name>dfs.namenode.keytab.file</name>
+      <value>/home/hdfs/hdfs.keytab</value>
+    </property>
+    <property>
+      <name>dfs.namenode.kerberos.principal</name>
+      <value>hdfs/myli@EXAMPLE.COM</value>
+    </property>
+    <property>
+      <name>dfs.namenode.kerberos.https.principal</name>
+      <value>HTTP/myli@EXAMPLE.COM</value>
+    </property>
+    
+    <property>
+      <name>dfs.datanode.address</name>
+      <value>0.0.0.0:1004</value>
+    </property>
+    <property>
+      <name>dfs.datanode.http.address</name>
+      <value>0.0.0.0:1006</value>
+    </property>
+    <property>
+      <name>dfs.datanode.keytab.file</name>
+      <value>/home/hdfs/hdfs.keytab</value>
+    </property>
+    <property>
+      <name>dfs.datanode.kerberos.principal</name>
+      <value>hdfs/myli@EXAMPLE.COM</value>
+    </property>
+    <property>
+      <name>dfs.datanode.kerberos.https.principal</name>
+      <value>HTTP/myli@EXAMPLE.COM</value>
+    </property>
+    
+    <property>
+      <name>dfs.webhdfs.enabled</name>
+      <value>true</value>
+    </property>
+    <property>
+      <name>dfs.web.authentication.kerberos.principal</name>
+      <value>HTTP/myli@EXAMPLE.COM</value>
+    </property>
+    <property>
+      <name>dfs.web.authentication.kerberos.keytab</name>
+      <value>/home/hdfs/HTTP.keytab</value>
+    </property>
+    <property>
+      <name>dfs.encrypt.data.transfer</name>
+      <value>true</value>
+    </property>
+    <property>
+      <name>dfs.encrypt.data.transfer</name>
+      <value>true</value>
+    </property>
+</configuration>' >> etc/hadoop/hdfs-site.xml
+
+ssh-keygen -t rsa -N '' -f ~/.ssh/id_rsa
+cat ~/.ssh/id_rsa.pub >> ~/.ssh/authorized_keys
+chmod 600 ~/.ssh/authorized_keys
+ssh localhost date # 测试登陆，打印登陆日期，但不登录，不用退出
+ssh myli date
+ssh 0.0.0.0 date
+ssh 192.168.127.131 date
+ssh kerberos.example.com date
+
+bin/hdfs namenode -format
+sbin/start-dfs.sh
+
+# root
+service iptables stop
+cd /home/hdfs/hadoop-2.7.1
+sbin/hadoop-daemon.sh start datanode # 开启kerberos后需要单独启动datanode
+
+错误日志
+tail logs/jsvc.err
+tail logs/hadoop-hdfs-datanode-myli.log
+tail logs/hadoop-hdfs-namenode-myli.log
+
+jps # 三个进程，jps, NameNode, 没有名字进程
+
+
+kinit -kt ~/hdfs.keytab hdfs/myli@EXAMPLE.COM
+bin/hdfs dfs -ls /
+bin/hdfs dfs -put README.txt /
+bin/hdfs dfs -put README.txt /rrr.txt
+bin/hdfs dfsadmin -report
+
+sbin/hadoop-daemon.sh stop datanode
+sbin/stop-dfs.sh
+
+cat /tmp/hadoop-hdfs/dfs/data/current/VERSION
+cat /tmp/hadoop-root/dfs/name/current/VERSION
+
+curl 'http://172.24.1.24:8080/hdfs?path=/&user=hdfs/myli@EXAMPLE.COM&url=hdfs://192.168.127.131:9000&keyTab=hdfs.keytab'
+curl 'http://172.24.1.24:8080/rHdfs?filePath=/README.txt'
+
+
+java 测试连接，机器hosts kerberos.example.com执行kdc机器
+```
+import lombok.extern.slf4j.Slf4j;
+import org.apache.hadoop.fs.FileStatus;
+import org.apache.hadoop.fs.FileSystem;
+import org.apache.hadoop.fs.Path;
+import org.apache.hadoop.security.UserGroupInformation;
+import org.springframework.util.StringUtils;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.bind.annotation.RestController;
+
+import java.io.BufferedReader;
+import java.io.File;
+import java.io.IOException;
+import java.io.InputStreamReader;
+import java.util.concurrent.TimeUnit;
+
+@Slf4j
+@RestController
+public class Test {
+
+    @RequestMapping({"","/"})
+    public String hi(){
+        return "Test#hi";
+    }
+
+    private String user;
+    private String url;
+    private String keyTab;
+
+
+    /**
+     * 测试hdfs链接
+     * 注：no rule applied to user, 试试命令行测试keytab登陆，然后替换正确的/etc/krb5.conf再试
+     * @param path
+     * @param user
+     * @param url
+     * @param keyTab
+     * @return
+     */
+    @RequestMapping("/hdfs")
+    public String hdfs(@RequestParam String path,
+                       @RequestParam String user,
+                       @RequestParam String url,
+                       @RequestParam String keyTab){
+        log.info("in hdfs");
+        log.info("cmd: curl 'http://localhost:8088/hdfs?path=/&user=ai@TDH&url=hdfs://192.168.127.131:9000&keyTab=/app/cp/ai.keytab'");
+
+        System.setProperty("hadoop.home.dir",new File(".").getAbsolutePath());
+//        System.setProperty("sun.security.krb5.debug", "true");
+        System.setProperty("java.security.krb5.conf", "krb5.conf");
+
+        if (StringUtils.isEmpty(path)) path = "/";
+        if (StringUtils.isEmpty(user)) user = "ai@TDH";
+        if (StringUtils.isEmpty(url)) url = "hdfs://192.168.127.131:9000";
+        if (StringUtils.isEmpty(keyTab)) keyTab = "/app/cp/ai.keytab";
+
+        log.info("path:"+path);
+        log.info("user:"+user);
+        log.info("hdfsUrl:"+url);
+        log.info("keytab:"+keyTab);
+
+        this.user = user;
+        this.url  = url;
+        this.keyTab=keyTab;
+
+        org.apache.hadoop.conf.Configuration conf = new org.apache.hadoop.conf.Configuration();
+        conf.set("fs.defaultFS",url);
+        conf.set("hadoop.security.authentication", "kerberos");
+
+        try {
+
+            UserGroupInformation.setConfiguration(conf);
+            UserGroupInformation.loginUserFromKeytab(user, keyTab);
+
+            FileSystem fs = FileSystem.get(conf);
+            FileStatus files[] = fs.listStatus(new Path(path));
+            for (FileStatus file : files) {
+                log.info(file.getPath().toString());
+            }
+        } catch (IOException e) {
+            e.printStackTrace();
+            return "error login hdfs";
+        }
+        return "done";
+    }
+
+    /**
+     * 读取hdfs文件，测试系统配置
+     * @param filePath
+     * @return
+     */
+    @RequestMapping("/rHdfs")
+    public String rHdfs(@RequestParam String filePath){
+        log.info("in rHdfs:{}",filePath);
+
+        if (url == null){
+            log.error("no hdfs url");
+            return "error";
+        }
+
+        System.setProperty("hadoop.home.dir",new File(".").getAbsolutePath());
+//        System.setProperty("sun.security.krb5.debug", "true");
+        System.setProperty("java.security.krb5.conf", "krb5.conf");
+        org.apache.hadoop.conf.Configuration conf = new org.apache.hadoop.conf.Configuration();
+        conf.set("fs.defaultFS",url);
+        conf.set("hadoop.security.authentication", "kerberos");
+
+        try {
+            UserGroupInformation.setConfiguration(conf);
+            UserGroupInformation.loginUserFromKeytab(user, keyTab);
+            FileSystem fs = FileSystem.get(conf);
+
+            String file = url+filePath;
+            log.info("to read,url:[{}], filePath:[{}], FSpath:[{}]",url,filePath,file);
+            Path path = new Path(file);
+            if (!fs.exists(path)){
+                log.error("file not found:{}",path.toString());
+                return "error";
+            }
+            FileStatus[] fstatus = fs.listStatus(path);
+            if (fstatus != null && fstatus.length > 0){
+                log.info("behaviorLog sizes:{} Bytes--{} MB",fstatus[0].getLen(),fstatus[0].getLen()/1024/1024);
+            }
+
+            log.info("start test read whole file");
+            long taskWatchStart = System.currentTimeMillis();
+            BufferedReader br = new BufferedReader(new InputStreamReader(fs.open(path)));
+            String line = null;
+            int count = 0;
+            while ((line = br.readLine()) != null){
+                count++;
+                if (count!=0 && count % 10 == 0){
+                    log.info("line count:{}",count);
+                    log.info("line content:{}",line);
+                }
+            }
+            br.close();
+            log.info("task done, take {}s", TimeUnit.MILLISECONDS.toSeconds(System.currentTimeMillis() - taskWatchStart));
+            log.info("lines:{}",count);
+
+        }catch (Exception e){
+            e.printStackTrace();
+        }
+        return "done";
+    }
+}
+```

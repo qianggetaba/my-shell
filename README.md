@@ -44,3 +44,7 @@ for one_dir in $(ls -AF | egrep "^\..*/$");do
   cd ..;
 done
 ```
+
+### 快速搭建，采用kerberos作为认证的hdfs单机模式，供开发调试代码，单机hdfs很容易部署，但是单机认证的hdfs，你肯定不会
+[hdfs-keytab.txt](hdfs-keytab.txt)
+
